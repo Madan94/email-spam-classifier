@@ -1,7 +1,12 @@
 from flask import Flask, render_template, request, redirect, url_for, session, flash
 import pickle
-import mysql.connector
+from supabase import create_client, Client
+import os
+from dotenv import load_dotenv
 import re
+
+# Load environment variables
+load_dotenv()
 
 # ----------------------
 # App Setup
@@ -30,16 +35,12 @@ def transform_text(text):
     return text
 
 # ----------------------
-# Database
+# Database (Supabase)
 # ----------------------
-def get_db():
-    return mysql.connector.connect(
-        host="localhost",
-        user="smc_user",
-        password="Smc@1234",
-        database="smc",
-        auth_plugin="mysql_native_password"
-    )
+def get_db() -> Client:
+    supabase_url = os.getenv("SUPABASE_URL", "https://your-project.supabase.co")
+    supabase_key = os.getenv("SUPABASE_KEY", "your-anon-key")
+    return create_client(supabase_url, supabase_key)
 
 # ----------------------
 # Routes
@@ -104,50 +105,52 @@ def register():
         flash("Passwords do not match")
         return redirect(url_for("signup"))
 
-    db = get_db()
-    cur = db.cursor()
+    supabase = get_db()
     try:
-        cur.execute(
-            """
-            INSERT INTO users (full_name, username, email, phone, password)
-            VALUES (%s, %s, %s, %s, %s)
-            """,
-            (full_name, username, email, phone, password)
-        )
-        db.commit()
-    except Exception:
-        db.rollback()
-        flash("User already exists")
+        # Insert new user
+        response = supabase.table("users").insert({
+            "full_name": full_name,
+            "username": username,
+            "email": email,
+            "phone": phone,
+            "password": password
+        }).execute()
+        
+        if response.data:
+            flash("Registration successful")
+            return redirect(url_for("signin"))
+        else:
+            flash("Registration failed")
+            return redirect(url_for("signup"))
+    except Exception as e:
+        # Check if it's a unique constraint violation
+        if "duplicate key" in str(e).lower() or "unique" in str(e).lower():
+            flash("User already exists")
+        else:
+            flash("Registration failed. Please try again.")
         return redirect(url_for("signup"))
-    finally:
-        cur.close()
-        db.close()
-
-    flash("Registration successful")
-    return redirect(url_for("signin"))
 
 @app.route("/login", methods=["POST"])
 def login():
     email = request.form["email"]
     password = request.form["password"]
 
-    db = get_db()
-    cur = db.cursor()
-    cur.execute(
-        "SELECT id, email FROM users WHERE email=%s AND password=%s",
-        (email, password)
-    )
-    user = cur.fetchone()
-    cur.close()
-    db.close()
-
-    if user:
-        session["user_id"] = user[0]
-        session["email"] = user[1]
-        return redirect(url_for("index"))
-
-    flash("Invalid credentials")
-    return redirect(url_for("signin"))
+    supabase = get_db()
+    try:
+        # Query user by email and password
+        response = supabase.table("users").select("id, email").eq("email", email).eq("password", password).execute()
+        
+        if response.data and len(response.data) > 0:
+            user = response.data[0]
+            session["user_id"] = user["id"]
+            session["email"] = user["email"]
+            return redirect(url_for("index"))
+        else:
+            flash("Invalid credentials")
+            return redirect(url_for("signin"))
+    except Exception:
+        flash("Login failed. Please try again.")
+        return redirect(url_for("signin"))
 
 @app.route("/logout")
 def logout():

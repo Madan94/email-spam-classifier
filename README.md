@@ -33,7 +33,7 @@ A machine learning-powered web application built with Flask that classifies emai
 - **Flask**: Web framework for building the application
 - **scikit-learn**: Machine learning library for model training and prediction
 - **pandas**: Data manipulation and analysis
-- **MySQL**: Database for user management
+- **Supabase**: PostgreSQL database and backend-as-a-service for user management
 
 ### Frontend
 - **HTML/CSS**: Frontend templates and styling
@@ -53,11 +53,9 @@ Before you begin, ensure you have the following installed:
    - Check your Python version: `python3 --version`
    - If you need to install Python 3.11.9, visit [python.org](https://www.python.org/downloads/)
 
-2. **MySQL Server**
-   - Install MySQL Server on your system
-   - Ubuntu/Debian: `sudo apt-get install mysql-server`
-   - macOS: `brew install mysql`
-   - Windows: Download from [MySQL Downloads](https://dev.mysql.com/downloads/mysql/)
+2. **Supabase Account**
+   - Sign up for a free account at [supabase.com](https://supabase.com)
+   - Create a new project in your Supabase dashboard
 
 3. **pip** (Python package manager)
    - Usually comes with Python installation
@@ -75,6 +73,8 @@ Spam-Email-Classification/
 ├── model.pkl             # Trained ML model (generated after training)
 ├── vectorizer.pkl        # TF-IDF vectorizer (generated after training)
 ├── .python-version       # Python version specification
+├── schema.sql            # Database schema for Supabase
+├── .env                  # Environment variables (create from .env.example)
 ├── templates/            # HTML templates
 │   ├── home.html
 │   ├── index.html
@@ -127,12 +127,6 @@ venv\Scripts\activate
 Install all required Python packages:
 
 ```bash
-pip install flask pandas scikit-learn mysql-connector-python
-```
-
-Or install from a requirements file (if available):
-
-```bash
 pip install -r requirements.txt
 ```
 
@@ -140,59 +134,64 @@ pip install -r requirements.txt
 - `flask==3.1.2` - Web framework
 - `pandas==2.3.3` - Data manipulation
 - `scikit-learn==1.8.0` - Machine learning library
-- `mysql-connector-python==9.5.0` - MySQL database connector
+- `supabase==2.3.4` - Supabase Python client
+- `python-dotenv==1.0.0` - Environment variable management
 
 ### Step 4: Verify Installation
 
 Verify that all packages are installed correctly:
 
 ```bash
-python3 -c "import flask, pandas, sklearn, mysql.connector; print('All packages installed successfully!')"
+python3 -c "import flask, pandas, sklearn, supabase, dotenv; print('All packages installed successfully!')"
 ```
 
-## 🗄 Database Setup
+## 🗄 Database Setup (Supabase)
 
-### Step 1: Start MySQL Service
+### Step 1: Create Supabase Project
+
+1. Go to [supabase.com](https://supabase.com) and sign in
+2. Click "New Project"
+3. Fill in your project details:
+   - **Name**: Choose a project name (e.g., "spam-email-classifier")
+   - **Database Password**: Create a strong password (save this securely)
+   - **Region**: Choose the region closest to you
+4. Wait for the project to be created (takes 1-2 minutes)
+
+### Step 2: Get Your Supabase Credentials
+
+1. In your Supabase project dashboard, go to **Settings** → **API**
+2. Copy the following values:
+   - **Project URL** (e.g., `https://xxxxx.supabase.co`)
+   - **anon/public key** (starts with `eyJ...`)
+
+### Step 3: Create Environment File
+
+Create a `.env` file in the project root with your Supabase credentials:
 
 ```bash
-# Linux
-sudo systemctl start mysql
-sudo systemctl enable mysql
-
-# macOS
-brew services start mysql
-
-# Windows
-# Start MySQL from Services or MySQL Workbench
+# Create .env file
+nano .env
 ```
 
-### Step 2: Create Database and User
+Add the following content (replace with your actual values from Step 2):
 
-Log in to MySQL as root:
-
-```bash
-mysql -u root -p
+```env
+SUPABASE_URL=https://your-project-id.supabase.co
+SUPABASE_KEY=your-anon-key-here
 ```
 
-Then run the following SQL commands:
+**Important**: Never commit the `.env` file to version control. It's already included in `.gitignore`.
+
+### Step 4: Create Database Table
+
+1. In your Supabase dashboard, go to **SQL Editor**
+2. Click "New Query"
+3. Copy and paste the contents of `schema.sql`:
 
 ```sql
--- Create database
-CREATE DATABASE smc;
-
--- Create user
-CREATE USER 'smc_user'@'localhost' IDENTIFIED BY 'Smc@1234';
-
--- Grant privileges
-GRANT ALL PRIVILEGES ON smc.* TO 'smc_user'@'localhost';
-FLUSH PRIVILEGES;
-
--- Use the database
-USE smc;
-
 -- Create users table
-CREATE TABLE users (
-    id INT AUTO_INCREMENT PRIMARY KEY,
+CREATE TABLE IF NOT EXISTS users (
+    id BIGSERIAL PRIMARY KEY,
     full_name VARCHAR(100) NOT NULL,
     username VARCHAR(50) UNIQUE NOT NULL,
     email VARCHAR(100) UNIQUE NOT NULL,
@@ -201,11 +200,14 @@ CREATE TABLE users (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
--- Exit MySQL
-EXIT;
+-- Create indexes for better query performance
+CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
+CREATE INDEX IF NOT EXISTS idx_users_username ON users(username);
 ```
 
-**Note**: You can modify the database credentials in `app.py` if you prefer different settings.
+4. Click "Run" to execute the SQL
+
+**Note**: The table structure uses PostgreSQL syntax (Supabase uses PostgreSQL).
 
 ## 🤖 Model Training
 
@@ -359,20 +361,25 @@ The model accuracy is displayed during training. Typical accuracy ranges from 95
 
 ## ⚙️ Configuration
 
-### Database Configuration
+### Database Configuration (Supabase)
 
-Edit the `get_db()` function in `app.py` to modify database settings:
+Database configuration is managed through environment variables in the `.env` file:
+
+```env
+SUPABASE_URL=https://your-project-id.supabase.co
+SUPABASE_KEY=your-anon-key-here
+```
+
+The `get_db()` function in `app.py` automatically reads these values:
 
 ```python
-def get_db():
-    return mysql.connector.connect(
-        host="localhost",          # Database host
-        user="smc_user",           # Database user
-        password="Smc@1234",       # Database password
-        database="smc",             # Database name
-        auth_plugin="mysql_native_password"
-    )
+def get_db() -> Client:
+    supabase_url = os.getenv("SUPABASE_URL", "https://your-project.supabase.co")
+    supabase_key = os.getenv("SUPABASE_KEY", "your-anon-key")
+    return create_client(supabase_url, supabase_key)
 ```
+
+**Security Note**: Never commit your `.env` file to version control. The `.env.example` file is provided as a template.
 
 ### Flask Secret Key
 
@@ -404,7 +411,7 @@ if __name__ == "__main__":
 
 **Solution**: Ensure all dependencies are installed:
 ```bash
-pip install flask pandas scikit-learn mysql-connector-python
+pip install -r requirements.txt
 ```
 
 ### Issue: Model files not found
@@ -418,13 +425,14 @@ python3 train.py
 
 ### Issue: Database connection error
 
-**Error**: `mysql.connector.errors.InterfaceError` or `Access denied`
+**Error**: `Connection error` or `Invalid API key`
 
 **Solutions**:
-1. Verify MySQL service is running
-2. Check database credentials in `app.py`
-3. Ensure database and user are created (see Database Setup)
-4. Verify user has proper privileges
+1. Verify your `.env` file exists and contains correct values
+2. Check that `SUPABASE_URL` and `SUPABASE_KEY` are correct in your Supabase dashboard
+3. Ensure the `users` table has been created in your Supabase project (see Database Setup)
+4. Verify your Supabase project is active (not paused)
+5. Check that your API key has the correct permissions
 
 ### Issue: Port already in use
 
