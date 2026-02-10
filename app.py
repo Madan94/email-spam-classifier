@@ -12,7 +12,7 @@ load_dotenv()
 # App Setup
 # ----------------------
 app = Flask(__name__)
-app.secret_key = "change_this_secret_key"
+app.secret_key = os.getenv("SECRET_KEY", "change_this_secret_key_in_production")
 
 # ----------------------
 # Load ML Artifacts
@@ -161,4 +161,8 @@ def logout():
 # Run
 # ----------------------
 if __name__ == "__main__":
-    app.run(debug=True)
+    # Use environment variable for port (required by most hosting platforms)
+    port = int(os.getenv("PORT", 5000))
+    # Only enable debug in development
+    debug = os.getenv("FLASK_ENV") == "development"
+    app.run(host="0.0.0.0", port=port, debug=debug)
