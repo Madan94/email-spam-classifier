@@ -17,11 +17,21 @@ app.secret_key = os.getenv("SECRET_KEY", "change_this_secret_key_in_production")
 # ----------------------
 # Load ML Artifacts
 # ----------------------
+import numpy as np
+from scipy.sparse import hstack, csr_matrix
+
 with open("vectorizer.pkl", "rb") as f:
     tfidf = pickle.load(f)
 
 with open("model.pkl", "rb") as f:
-    model = pickle.load(f)
+    artifacts = pickle.load(f)
+
+nb_model = artifacts['nb_model']
+svm_model = artifacts['svm_model']
+lr_model = artifacts['lr_model']
+scaler = artifacts['scaler']
+best_model_name = artifacts['best_model']
+tfidf_feature_count = artifacts['tfidf_feature_count']
 
 # ----------------------
 # Text Processing
@@ -29,10 +39,24 @@ with open("model.pkl", "rb") as f:
 # ----------------------
 def transform_text(text):
     text = str(text).lower()
-    text = re.sub(r"http\S+|www\S+", " url ", text)
-    text = re.sub(r"\d+", " number ", text)
+    text = re.sub(r"http\S+|www\S+|https\S+", " urllink ", text)
+    text = re.sub(r"\S+@\S+", " emailaddr ", text)
+    text = re.sub(r"\b\d{10,}\b", " phonenumber ", text)
+    text = re.sub(r"\b\d{4,5}[-\s]?\d{5,6}\b", " phonenumber ", text)
+    text = re.sub(r"\b\d+\b", " number ", text)
     text = re.sub(r"[^a-z0-9\s]", " ", text)
+    text = re.sub(r"\s+", " ", text).strip()
     return text
+
+def extract_extra_features(raw_text):
+    """Extract the same extra features used during training."""
+    text_len = len(raw_text)
+    has_url = 1 if re.search(r"http|www|\.com", raw_text.lower()) else 0
+    has_phone = 1 if re.search(r"\d{5,}", raw_text) else 0
+    has_spam_words = 1 if re.search(r"free|win|prize|cash|claim", raw_text.lower()) else 0
+    upper_ratio = sum(1 for c in raw_text if c.isupper()) / max(len(raw_text), 1)
+    exclaim_count = raw_text.count('!')
+    return [[text_len, has_url, has_phone, has_spam_words, upper_ratio, exclaim_count]]
 
 # ----------------------
 # Database (Supabase)
@@ -73,11 +97,26 @@ def predict():
         return redirect(url_for("index"))
 
     processed = transform_text(message)
-    vector = tfidf.transform([processed])
-    result = model.predict(vector)[0]
+    tfidf_vector = tfidf.transform([processed])
+
+    # Build extra features (same as training)
+    extra = extract_extra_features(message)
+    extra_scaled = scaler.transform(extra)
+    extra_sparse = csr_matrix(extra_scaled)
+    full_vector = hstack([tfidf_vector, extra_sparse])
+
+    # Ensemble prediction (majority vote of NB + SVM + LR)
+    nb_pred = nb_model.predict(tfidf_vector)[0]
+    svm_pred = svm_model.predict(full_vector)[0]
+    lr_pred = lr_model.predict(full_vector)[0]
+    result = int(round((nb_pred + svm_pred + lr_pred) / 3))
+
+    # Get confidence from LR (supports predict_proba)
+    lr_proba = lr_model.predict_proba(full_vector)[0]
+    confidence = max(lr_proba) * 100
 
     prediction = "Spam" if result == 1 else "Not Spam"
-    return render_template("result.html", prediction=prediction)
+    return render_template("result.html", prediction=prediction, confidence=f"{confidence:.1f}%")
 
 # ----------------------
 # Auth
@@ -162,7 +201,7 @@ def logout():
 # ----------------------
 if __name__ == "__main__":
     # Use environment variable for port (required by most hosting platforms)
-    port = int(os.getenv("PORT", 5000))
+    port = int(os.getenv("PORT", 5050))
     # Only enable debug in development
     debug = os.getenv("FLASK_ENV") == "development"
     app.run(host="0.0.0.0", port=port, debug=debug)

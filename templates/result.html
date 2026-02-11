@@ -7,9 +7,8 @@
     <link rel="shortcut icon" href="{{ url_for('static', filename='images/favicon.png') }}">
 </head>
 <body>
-    <!-- <h1>Email Spam Classifier Result</h1> -->
-    <h3><b>Prediction:</b> {{ prediction }}</p></h3>
-    <!-- <a href="/index">Go back</a>
-    <a href="/signin">Log out</a> -->
+    <h3><b>Prediction:</b> {{ prediction }}
+    {% if confidence %}<span style="font-size: 0.85em; opacity: 0.8;"> ({{ confidence }} confidence)</span>{% endif %}
+    </h3>
 </body>
 </html>
